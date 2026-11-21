@@ -386,54 +386,6 @@
                         </div>
                     </div>
 
-                    <div class="landing-auth auth-overlay" id="landing-auth" aria-hidden="true">
-                        <div class="auth-dialog" role="dialog" aria-modal="true" aria-label="GearVault account">
-                            <button type="button" class="auth-close" id="close-auth-btn" aria-label="Close account form">&times;</button>
-                            <div class="auth-box" id="login-box">
-                                <h2 id="login-title">Log In</h2>
-                                <p>Welcome back to GearVault</p>
-                                <form id="login-form">
-                                    <div class="form-group">
-                                        <label class="sr-only" for="login-email">Email or Username</label>
-                                        <span class="field-icon" aria-hidden="true">✉</span>
-                                        <input type="text" id="login-email" placeholder="Email or Username" required>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="sr-only" for="login-pass">Password</label>
-                                        <span class="field-icon" aria-hidden="true">▣</span>
-                                        <input type="password" id="login-pass" placeholder="Password" required>
-                                    </div>
-                                    <button type="submit" class="primary-btn full-width">Log in</button>
-                                </form>
-                                <p class="auth-switch">Don't have an account? <a href="#" id="to-signup">Sign up</a></p>
-                            </div>
-
-                            <div class="auth-box" id="signup-box">
-                                <h2 id="signup-title">Sign Up</h2>
-                                <p>Join GearVault today</p>
-                                <form id="signup-form">
-                                    <div class="form-group">
-                                        <label class="sr-only" for="signup-name">Full Name</label>
-                                        <span class="field-icon" aria-hidden="true">♟</span>
-                                        <input type="text" id="signup-name" placeholder="Full Name" required>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="sr-only" for="signup-email">Email Address</label>
-                                        <span class="field-icon" aria-hidden="true">✉</span>
-                                        <input type="email" id="signup-email" placeholder="Email Address" required>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="sr-only" for="signup-pass">Password</label>
-                                        <span class="field-icon" aria-hidden="true">▣</span>
-                                        <input type="password" id="signup-pass" placeholder="Password" required>
-                                    </div>
-                                    <button type="submit" class="primary-btn full-width">Sign Up</button>
-                                </form>
-                                <p class="auth-switch">Already have an account? <a href="#" id="to-login">Log in</a></p>
-                            </div>
-                            </div>
-                    </div>
-
                     <div class="landing-features" id="landing-features">
                         <article class="feature-item">
                             <span class="feature-icon" aria-hidden="true">⬡</span>
@@ -460,6 +412,55 @@
             </section>
 
         </main>
+    </div>
+
+    <!-- AUTH DIALOG: kept outside animated views so it always covers the viewport -->
+    <div class="landing-auth auth-overlay" id="landing-auth" aria-hidden="true">
+        <div class="auth-dialog" role="dialog" aria-modal="true" aria-label="GearVault account">
+            <button type="button" class="auth-close" id="close-auth-btn" aria-label="Close account form">&times;</button>
+            <div class="auth-box" id="login-box">
+                <h2 id="login-title">Log In</h2>
+                <p>Welcome back to GearVault</p>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label class="sr-only" for="login-email">Email or Username</label>
+                        <span class="field-icon" aria-hidden="true">✉</span>
+                        <input type="text" id="login-email" placeholder="Email or Username" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="sr-only" for="login-pass">Password</label>
+                        <span class="field-icon" aria-hidden="true">▣</span>
+                        <input type="password" id="login-pass" placeholder="Password" required>
+                    </div>
+                    <button type="submit" class="primary-btn full-width">Log in</button>
+                </form>
+                <p class="auth-switch">Don't have an account? <a href="#" id="to-signup">Sign up</a></p>
+            </div>
+
+            <div class="auth-box" id="signup-box">
+                <h2 id="signup-title">Sign Up</h2>
+                <p>Join GearVault today</p>
+                <form id="signup-form">
+                    <div class="form-group">
+                        <label class="sr-only" for="signup-name">Full Name</label>
+                        <span class="field-icon" aria-hidden="true">♟</span>
+                        <input type="text" id="signup-name" placeholder="Full Name" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="sr-only" for="signup-email">Email Address</label>
+                        <span class="field-icon" aria-hidden="true">✉</span>
+                        <input type="email" id="signup-email" placeholder="Email Address" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="sr-only" for="signup-pass">Password</label>
+                        <span class="field-icon" aria-hidden="true">▣</span>
+                        <input type="password" id="signup-pass" placeholder="Password" required>
+                    </div>
+                    <button type="submit" class="primary-btn full-width">Sign Up</button>
+                </form>
+                <p class="auth-switch">Already have an account? <a href="#" id="to-login">Log in</a></p>
+            </div>
+        </div>
     </div>
 
     <!-- ADD/EDIT GEAR MODAL -->
@@ -491,7 +492,7 @@
                 </div>
                 <div class="form-group">
                     <label>Price (₱)</label>
-                    <input type="number" id="gear-price" step="0.01" required placeholder="0.00">
+                    <input type="number" id="gear-price" step="0.01" min="0" required placeholder="0.00">
                 </div>
                 <div class="form-group">
                     <label>Condition</label>
@@ -543,6 +544,8 @@
             </form>
         </div>
     </div>
+
+    <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
     <script src="app.js"></script>
 </body>

@@ -3,8 +3,45 @@
 
 document.addEventListener('DOMContentLoaded', () => {
     // Current Logged-in User State
-    let currentUser = JSON.parse(localStorage.getItem('gearVault_currentUser')) || null;
     const THEME_KEY = 'gearVault_settings';
+    const MAX_ACTIVITIES = 30;
+
+    function readStorage(key, fallback = null) {
+        try {
+            const value = JSON.parse(localStorage.getItem(key));
+            return value === null ? fallback : value;
+        } catch (e) {
+            return fallback;
+        }
+    }
+
+    function loadUsers() {
+        const users = readStorage('gearVault_users', []);
+        return Array.isArray(users) ? users : [];
+    }
+
+    function persistUsers(users) {
+        try {
+            localStorage.setItem('gearVault_users', JSON.stringify(users));
+            return true;
+        } catch (e) {
+            alert('Storage is full. Remove large uploaded images or export a backup, then try again.');
+            return false;
+        }
+    }
+
+    function persistSession() {
+        try {
+            localStorage.setItem('gearVault_currentUser', JSON.stringify(currentUser));
+        } catch (e) {
+            alert('Storage is full. Remove large uploaded images or export a backup, then try again.');
+        }
+    }
+
+    let currentUser = readStorage('gearVault_currentUser');
+    // Remember the email the session was loaded with so profile edits can update
+    // the matching account record instead of creating a duplicate one.
+    let currentUserKey = currentUser ? currentUser.email : null;
 
     // DOM Elements - Navigation & Views
     const sidebarNav = document.getElementById('sidebar-nav');
@@ -39,6 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const clearAllBtn = document.getElementById('clear-all-btn');
     const settingsClearBtn = document.getElementById('settings-clear-btn');
     const darkModeToggle = document.getElementById('dark-mode-toggle');
+    const notificationsToggle = document.getElementById('notifications-toggle');
     const exportBtn = document.getElementById('export-btn');
     const saveAccountBtn = document.getElementById('save-account-btn');
     const moveAllInventoryBtn = document.getElementById('move-all-inventory-btn');
@@ -60,20 +98,54 @@ document.addEventListener('DOMContentLoaded', () => {
     function logActivity(message) {
         if (!currentUser) return;
         if (!Array.isArray(currentUser.activities)) currentUser.activities = [];
-        currentUser.activities = [message, ...currentUser.activities];
+        currentUser.activities = [message, ...currentUser.activities].slice(0, MAX_ACTIVITIES);
     }
 
-    // Restore the saved dark-mode preference on startup
-    function restoreTheme() {
-        let settings = {};
+    // Escape user-supplied text before it is written with innerHTML
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[char]);
+    }
+
+    function loadSettings() {
+        const settings = readStorage(THEME_KEY, {});
+        return settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
+    }
+
+    function saveSettings(settings) {
         try {
-            settings = JSON.parse(localStorage.getItem(THEME_KEY)) || {};
+            localStorage.setItem(THEME_KEY, JSON.stringify(settings));
         } catch (e) {
-            settings = {};
+            // Preferences are optional; the app still works if storage is full.
         }
+    }
+
+    function notificationsEnabled() {
+        return loadSettings().notifications !== false;
+    }
+
+    function notify(message) {
+        if (!notificationsEnabled()) return;
+        const stack = document.getElementById('toast-stack');
+        if (!stack) return;
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.textContent = message;
+        stack.appendChild(toast);
+        window.setTimeout(() => {
+            toast.classList.add('is-leaving');
+            window.setTimeout(() => toast.remove(), 250);
+        }, 2600);
+    }
+
+    // Restore the saved theme and notification preferences on startup
+    function restoreTheme() {
+        const settings = loadSettings();
         const isDark = settings.darkMode === true;
         document.body.classList.toggle('dark-mode', isDark);
         darkModeToggle.checked = isDark;
+        notificationsToggle.checked = settings.notifications !== false;
     }
 
     // Loads the application and initializes its features
@@ -84,12 +156,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize UI Based on Auth State
     function checkAuthState() {
+        document.body.classList.toggle('auth-page', !currentUser);
         if (currentUser) {
             closeAuthDialog(false);
             if (!currentUser.psuCapacity) currentUser.psuCapacity = 650;
+            currentUserKey = currentUser.email;
             sidebarNav.style.display = 'flex';
             loginView.classList.remove('active');
             dashboardView.classList.add('active');
+            navLinks.forEach(link => link.classList.toggle('active', link.dataset.target === 'dashboard-view'));
 
             document.getElementById('settings-name').value = currentUser.name || '';
             document.getElementById('settings-email').value = currentUser.email || '';
@@ -100,7 +175,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             renderAll();
         } else {
+            currentUserKey = null;
             sidebarNav.style.display = 'none';
+            navLinks.forEach(link => link.classList.remove('active'));
             viewSections.forEach(sec => sec.classList.remove('active'));
             loginView.classList.add('active');
             closeAuthDialog(false);
@@ -176,7 +253,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const email = document.getElementById('signup-email').value.trim();
         const password = document.getElementById('signup-pass').value;
 
-        let users = JSON.parse(localStorage.getItem('gearVault_users')) || [];
+        let users = loadUsers();
         if (users.some(u => u.email === email)) {
             alert('An account with this email already exists.');
             return;
@@ -194,12 +271,13 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         users.push(newUser);
-        localStorage.setItem('gearVault_users', JSON.stringify(users));
+        if (!persistUsers(users)) return;
 
         currentUser = newUser;
-        localStorage.setItem('gearVault_currentUser', JSON.stringify(currentUser));
+        persistSession();
         signupForm.reset();
         checkAuthState();
+        notify(`Welcome to GearVault, ${name}!`);
     });
 
     // Login Form Event
@@ -208,7 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const identifier = document.getElementById('login-email').value.trim();
         const password = document.getElementById('login-pass').value;
 
-        let users = JSON.parse(localStorage.getItem('gearVault_users')) || [];
+        const users = loadUsers();
         const user = users.find(u => (u.email === identifier || u.name === identifier) && u.password === password);
 
         if (!user) {
@@ -217,9 +295,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         currentUser = user;
-        localStorage.setItem('gearVault_currentUser', JSON.stringify(currentUser));
+        persistSession();
         loginForm.reset();
         checkAuthState();
+        notify(`Welcome back, ${user.name || user.email}!`);
     });
 
     // Logout Event
@@ -313,7 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const description = document.getElementById('gear-desc').value.trim();
         const status = document.getElementById('gear-status').value;
 
-        if (!name || !category || isNaN(price) || !condition || !status) {
+        if (!name || !category || isNaN(price) || price < 0 || !condition || !status) {
             alert('Please fill out all required fields correctly.');
             return;
         }
@@ -326,10 +405,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 item.id == id ? { ...item, name, category, price, condition, wattage, platform, description, status, image: pendingGearImage } : item
             );
             logActivity(`Updated gear item: ${name}`);
+            notify(`Updated ${name}`);
         } else {
             const newItem = { id: Date.now(), name, category, price, condition, wattage, platform, description, status, image: pendingGearImage };
             currentUser.items.push(newItem);
             logActivity(`Added ${name} to ${status}`);
+            notify(`Added ${name} to ${status}`);
         }
 
         saveAndRefresh();
@@ -366,7 +447,25 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         const reader = new FileReader();
-        reader.onload = () => updateGearImagePreview(reader.result);
+        reader.onload = () => {
+            const img = new Image();
+            img.onload = () => {
+                // Downscale before saving: full-size photos quickly exhaust
+                // the browser's localStorage quota when stored as data URLs.
+                const maxSide = 900;
+                const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(img.width * scale));
+                canvas.height = Math.max(1, Math.round(img.height * scale));
+                canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                updateGearImagePreview(canvas.toDataURL('image/jpeg', 0.82));
+            };
+            img.onerror = () => {
+                alert('That image could not be read. Please try another file.');
+                gearImageInput.value = '';
+            };
+            img.src = reader.result;
+        };
         reader.readAsDataURL(file);
     });
 
@@ -392,8 +491,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    categoryFilter.addEventListener('change', syncMarketChips);
-
     clearSearchBtn.addEventListener('click', () => {
         searchInput.value = '';
         categoryFilter.value = 'All';
@@ -401,43 +498,62 @@ document.addEventListener('DOMContentLoaded', () => {
         renderAll();
     });
 
+    // Shared edit dialog for owned and wishlist gear
+    function openEditGear(item) {
+        if (!item) return;
+        document.getElementById('modal-title').textContent = 'Edit Gear';
+        document.getElementById('gear-id').value = item.id;
+        document.getElementById('gear-name').value = item.name;
+        document.getElementById('gear-category').value = item.category;
+        document.getElementById('gear-price').value = item.price;
+        document.getElementById('gear-condition').value = item.condition;
+        document.getElementById('gear-wattage').value = item.wattage || '';
+        document.getElementById('gear-platform').value = item.platform || '';
+        document.getElementById('gear-desc').value = item.description || '';
+        document.getElementById('gear-status').value = item.status;
+        gearImageInput.value = '';
+        updateGearImagePreview(item.image || '');
+        gearModal.classList.add('open');
+        document.body.classList.add('gear-modal-open');
+        requestAnimationFrame(() => document.getElementById('gear-name').focus());
+    }
+
     // Delete & Edit Events (Delegated)
     inventoryTableBody.addEventListener('click', (e) => {
-        const id = e.target.getAttribute('data-id');
-        if (e.target.classList.contains('delete-btn')) {
-            if (confirm('Are you sure you want to delete this gear item?')) {
-                const item = currentUser.items.find(i => i.id == id);
-                if (item) {
-                    logActivity(`Deleted ${item.name}`);
-                }
-                currentUser.items = currentUser.items.filter(item => item.id != id);
+        const button = e.target.closest('button[data-id]');
+        if (!button) return;
+        const id = button.dataset.id;
+        const item = currentUser.items.find(i => i.id == id);
+
+        if (button.classList.contains('delete-btn')) {
+            if (confirm(`Delete ${item ? item.name : 'this gear item'}? This cannot be undone.`)) {
+                if (item) logActivity(`Deleted ${item.name}`);
+                currentUser.items = currentUser.items.filter(i => i.id != id);
                 saveAndRefresh();
+                notify('Gear item deleted');
             }
-        } else if (e.target.classList.contains('edit-btn')) {
-            const item = currentUser.items.find(i => i.id == id);
-            if (item) {
-                document.getElementById('modal-title').textContent = 'Edit Gear';
-                document.getElementById('gear-id').value = item.id;
-                document.getElementById('gear-name').value = item.name;
-                document.getElementById('gear-category').value = item.category;
-                document.getElementById('gear-price').value = item.price;
-                document.getElementById('gear-condition').value = item.condition;
-                document.getElementById('gear-wattage').value = item.wattage || '';
-                document.getElementById('gear-platform').value = item.platform || '';
-                document.getElementById('gear-desc').value = item.description || '';
-                document.getElementById('gear-status').value = item.status;
-                gearImageInput.value = '';
-                updateGearImagePreview(item.image || '');
-                gearModal.classList.add('open');
-                document.body.classList.add('gear-modal-open');
-            }
+        } else if (button.classList.contains('edit-btn')) {
+            openEditGear(item);
         }
     });
 
-    // Wishlist Move to Inventory Event
+    // Wishlist Edit / Delete / Move-to-Inventory Events (Delegated)
     wishlistGrid.addEventListener('click', (e) => {
-        if (e.target.classList.contains('move-btn')) {
-            const id = e.target.getAttribute('data-id');
+        const button = e.target.closest('button[data-id]');
+        if (!button) return;
+        const id = button.dataset.id;
+        const item = currentUser.items.find(i => i.id == id);
+
+        if (button.classList.contains('delete-wishlist-btn')) {
+            if (confirm(`Remove ${item ? item.name : 'this item'} from your wishlist?`)) {
+                if (item) logActivity(`Removed ${item.name} from wishlist`);
+                currentUser.items = currentUser.items.filter(i => i.id != id);
+                saveAndRefresh();
+                notify('Removed from wishlist');
+            }
+        } else if (button.classList.contains('edit-wishlist-btn')) {
+            openEditGear(item);
+        } else if (button.classList.contains('move-btn')) {
             currentUser.items = currentUser.items.map(i => {
                 if (i.id == id) {
                     logActivity(`Moved ${i.name} to Inventory`);
@@ -446,19 +562,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 return i;
             });
             saveAndRefresh();
+            notify('Moved to inventory');
         }
     });
 
     moveAllInventoryBtn.addEventListener('click', () => {
-        if (confirm('Move all wishlist items to inventory?')) {
+        const wishlistCount = currentUser.items.filter(i => i.status === 'Wishlist').length;
+        if (wishlistCount === 0) {
+            alert('Your wishlist is empty.');
+            return;
+        }
+        if (confirm(`Move all ${wishlistCount} wishlist item(s) to inventory?`)) {
+            let moved = 0;
             currentUser.items = currentUser.items.map(i => {
                 if (i.status === 'Wishlist') {
+                    moved++;
                     return { ...i, status: 'Owned' };
                 }
                 return i;
             });
-            logActivity('Moved all wishlist items to inventory');
+            logActivity(`Moved ${moved} wishlist item(s) to inventory`);
             saveAndRefresh();
+            notify(`Moved ${moved} item(s) to inventory`);
         }
     });
 
@@ -472,6 +597,7 @@ document.addEventListener('DOMContentLoaded', () => {
         logActivity(`Added task: ${text}`);
         taskInput.value = '';
         saveAndRefresh();
+        notify('Task added');
     });
 
     // Task Checkbox | change | Task handler (documentation event map)
@@ -501,17 +627,24 @@ document.addEventListener('DOMContentLoaded', () => {
         logActivity(`Started new project: ${name}`);
         projectNameInput.value = '';
         saveAndRefresh();
+        notify('Project created');
     });
 
     document.getElementById('projects-view').addEventListener('click', (e) => {
-        const id = e.target.getAttribute('data-id');
-        if (e.target.classList.contains('complete-proj')) {
+        const button = e.target.closest('button[data-id]');
+        if (!button) return;
+        const id = button.dataset.id;
+        const project = currentUser.projects.find(p => p.id == id);
+
+        if (button.classList.contains('complete-proj')) {
             currentUser.projects = currentUser.projects.map(p => p.id == id ? { ...p, status: 'Completed' } : p);
             logActivity(`Completed project build ID: ${id}`);
             saveAndRefresh();
-        } else if (e.target.classList.contains('delete-proj')) {
+            notify(`Completed: ${project ? project.name : 'project'}`);
+        } else if (button.classList.contains('delete-proj')) {
             currentUser.projects = currentUser.projects.filter(p => p.id != id);
             saveAndRefresh();
+            notify('Project deleted');
         }
     });
 
@@ -527,6 +660,7 @@ document.addEventListener('DOMContentLoaded', () => {
         saveAndRefresh();
         // PSU Update Button | click | evaluateBuildTools() (documentation event map)
         evaluateBuildTools();
+        notify(`PSU rating set to ${cap}W`);
     });
 
     // DIY Audio Enclosure Volume Estimator Handler
@@ -549,6 +683,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         logActivity(`Calculated enclosure volume: ${volumeLiters.toFixed(2)} L`);
         saveAndRefresh();
+        notify('Volume calculated');
     });
 
     // Clear All Events
@@ -559,6 +694,7 @@ document.addEventListener('DOMContentLoaded', () => {
             currentUser.projects = [];
             logActivity('Cleared all inventory & project data');
             saveAndRefresh();
+            notify('All gear, tasks, and projects cleared');
         }
     };
     clearAllBtn.addEventListener('click', clearAllData);
@@ -572,6 +708,10 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Fields cannot be empty.');
             return;
         }
+        if (loadUsers().some(u => u.email === newEmail && u.email !== currentUserKey)) {
+            alert('Another account already uses that email address.');
+            return;
+        }
         currentUser.name = newName;
         currentUser.email = newEmail;
         logActivity('Updated account profile');
@@ -579,7 +719,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('sidebar-user-name').textContent = newName;
         document.getElementById('account-initial').textContent = newName.charAt(0).toUpperCase();
         saveAndRefresh();
-        alert('Account settings updated successfully!');
+        notify('Account settings updated');
     });
 
     // Export Inventory as JSON File
@@ -597,20 +737,23 @@ document.addEventListener('DOMContentLoaded', () => {
         downloadAnchor.remove();
         logActivity('Exported account data backup');
         saveAndRefresh();
+        notify('Backup downloaded');
     });
 
-    // Dark Mode Toggle Event (preference is saved)
+    // Preferences (both are saved and restored on startup)
     darkModeToggle.addEventListener('change', () => {
         const isDark = darkModeToggle.checked;
         document.body.classList.toggle('dark-mode', isDark);
-        let settings = {};
-        try {
-            settings = JSON.parse(localStorage.getItem(THEME_KEY)) || {};
-        } catch (e) {
-            settings = {};
-        }
+        const settings = loadSettings();
         settings.darkMode = isDark;
-        localStorage.setItem(THEME_KEY, JSON.stringify(settings));
+        saveSettings(settings);
+    });
+
+    notificationsToggle.addEventListener('change', () => {
+        const settings = loadSettings();
+        settings.notifications = notificationsToggle.checked;
+        saveSettings(settings);
+        if (notificationsToggle.checked) notify('Notifications enabled');
     });
 
     // Helper: Evaluate PSU Wattage & Compatibility Rules
@@ -682,24 +825,32 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        compatList.innerHTML = checks.map(msg => `<li>${msg}</li>`).join('');
+        compatList.innerHTML = checks.map(msg => `<li>${escapeHtml(msg)}</li>`).join('');
         document.getElementById('dash-compat-summary').textContent =
             checks.some(c => c.startsWith('⚠️')) ? 'Warning Found' : 'All Clear';
     }
 
     // Core Data & DOM Rendering Engine
     function saveAndRefresh() {
-        let users = JSON.parse(localStorage.getItem('gearVault_users')) || [];
-        users = users.map(u => u.email === currentUser.email ? currentUser : u);
-        localStorage.setItem('gearVault_users', JSON.stringify(users));
-        localStorage.setItem('gearVault_currentUser', JSON.stringify(currentUser));
+        const users = loadUsers();
+        const index = users.findIndex(u => u.email === currentUserKey);
+        if (index >= 0) users[index] = currentUser;
+        else users.push(currentUser);
+        persistUsers(users);
+        persistSession();
+        currentUserKey = currentUser.email;
         renderAll();
     }
 
     const featuredProducts = [
-        { name: 'GeForce RTX 5070 12GB', category: 'GPU', price: 34999, image: 'images/pc-components.jpg', platform: 'PCIe 5.0' },
-        { name: 'AMD Ryzen 7 Processor', category: 'CPU', price: 26999, image: 'images/computer-hardware.jpg', platform: 'AM5' },
-        { name: 'AM5 Gaming Motherboard', category: 'Motherboard', price: 18999, image: 'images/computer-hardware.jpg', platform: 'AM5' }
+        { name: 'GeForce RTX 5070 12GB', category: 'GPU', price: 34999, image: 'images/gpu.jpg', platform: 'PCIe 5.0' },
+        { name: 'AMD Ryzen 7 Processor', category: 'CPU', price: 26999, image: 'images/cpu.jpg', platform: 'AM5' },
+        { name: 'AM5 Gaming Motherboard', category: 'Motherboard', price: 18999, image: 'images/motherboard.jpg', platform: 'AM5' },
+        { name: '32GB DDR5 RGB Memory', category: 'RAM', price: 6499, image: 'images/ram.jpg', platform: 'DDR5' },
+        { name: '850W Gold Power Supply', category: 'PSU', price: 7299, image: 'images/psu.jpg', platform: 'ATX 3.0' },
+        { name: 'Studio Headphones', category: 'Audio', price: 3999, image: 'images/audio.jpg', platform: '3.5mm / USB' },
+        { name: 'Wireless Gaming Mouse', category: 'Peripherals', price: 2499, image: 'images/peripherals.jpg', platform: 'Wireless' },
+        { name: '27-inch QHD Monitor', category: 'Monitor', price: 14999, image: 'images/monitor.jpg', platform: '1440p' }
     ];
 
     const featuredCard = document.getElementById('featured-gear-card');
@@ -708,7 +859,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const addButton = event.target.closest('.featured-add-btn');
             if (!addButton || !currentUser) return;
 
-            const product = featuredProducts[Number(addButton.dataset.featuredIndex)];
+            const product = featuredProducts.find(item => item.name === addButton.dataset.featuredName);
+            if (!product) return;
             if (currentUser.items.some(item => item.name === product.name)) return;
 
             currentUser.items.push({
@@ -716,7 +868,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 name: product.name,
                 category: product.category,
                 price: product.price,
-                condition: 'New',
+                condition: 'Brand New',
                 wattage: 0,
                 platform: product.platform,
                 description: 'Added from Featured Gear',
@@ -725,6 +877,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             logActivity(`Added ${product.name} to Wishlist`);
             saveAndRefresh();
+            notify(`Added ${product.name} to your wishlist`);
         });
     }
 
@@ -741,7 +894,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // 1. Render Inventory Table (Strictly Owned items only)
         const ownedOnlyItems = gearItems.filter(i => i.status === 'Owned');
         const filteredOwned = ownedOnlyItems.filter(item => {
-            const matchesQuery = item.name.toLowerCase().includes(query) || item.category.toLowerCase().includes(query);
+            const searchable = `${item.name} ${item.category} ${item.platform || ''} ${item.description || ''}`.toLowerCase();
+            const matchesQuery = searchable.includes(query);
             const matchesCat = selectedCat === 'All' || item.category === selectedCat;
             return matchesQuery && matchesCat;
         });
@@ -754,16 +908,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const specText = [item.platform, item.wattage ? `${item.wattage}W` : ''].filter(Boolean).join(' • ') || '-';
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td>${item.image ? `<img class="table-gear-image" src="${item.image}" alt="${item.name}">` : ''}<span>${item.name}</span></td>
-                    <td>${item.category}</td>
-                    <td>₱${item.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td>${item.condition}</td>
-                    <td>${specText}</td>
-                    <td>${item.description || '<em>No description provided</em>'}</td>
+                    <td>${item.image ? `<img class="table-gear-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}">` : ''}<span>${escapeHtml(item.name)}</span></td>
+                    <td>${escapeHtml(item.category)}</td>
+                    <td>₱${Number(item.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td>${escapeHtml(item.condition)}</td>
+                    <td>${escapeHtml(specText)}</td>
+                    <td>${item.description ? escapeHtml(item.description) : '<em>No description provided</em>'}</td>
                     <td><span class="badge owned">Owned</span></td>
                     <td>
                         <button class="edit-btn secondary-btn" data-id="${item.id}">Edit</button>
-                        <button class="delete-btn danger-btn" data-id="${item.id}" style="margin-top:0;">Delete</button>
+                        <button type="button" class="delete-btn danger-btn" data-id="${item.id}">Delete</button>
                     </td>
                 `;
                 inventoryTableBody.appendChild(tr);
@@ -787,13 +941,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 const card = document.createElement('div');
                 card.className = 'stat-card';
                 card.innerHTML = `
-                    ${item.image ? `<img class="wishlist-gear-image" src="${item.image}" alt="${item.name}">` : ''}
-                    <h4>${item.name}</h4>
-                    <p style="color:var(--accent-color); font-weight:600;">${item.category}</p>
-                    <p>₱${item.price.toLocaleString()}</p>
-                    ${specText ? `<p style="font-size:0.8rem; color:#7f8c8d;">${specText}</p>` : ''}
-                    <p style="font-size:0.85rem; color:#7f8c8d; margin:8px 0;">"${item.description || 'No reason specified'}"</p>
-                    <button class="primary-btn move-btn" data-id="${item.id}" style="margin-top:5px;">Move to Inventory</button>
+                    ${item.image ? `<img class="wishlist-gear-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}">` : ''}
+                    <h4>${escapeHtml(item.name)}</h4>
+                    <p class="wishlist-card-meta">${escapeHtml(item.category)}</p>
+                    <p>₱${Number(item.price || 0).toLocaleString()}</p>
+                    ${specText ? `<p class="wishlist-card-spec">${escapeHtml(specText)}</p>` : ''}
+                    <p class="wishlist-card-reason">"${escapeHtml(item.description || 'No reason specified')}"</p>
+                    <div class="wishlist-card-actions">
+                        <button type="button" class="primary-btn move-btn" data-id="${item.id}">Move to Inventory</button>
+                    </div>
+                    <div class="wishlist-card-actions">
+                        <button type="button" class="secondary-btn edit-wishlist-btn" data-id="${item.id}">Edit</button>
+                        <button type="button" class="danger-btn delete-wishlist-btn" data-id="${item.id}">Delete</button>
+                    </div>
                 `;
                 wishlistGrid.appendChild(card);
             });
@@ -810,9 +970,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 li.innerHTML = `
                     <span style="${t.completed ? 'text-decoration: line-through; color: #7f8c8d;' : ''}">
                         <input type="checkbox" class="toggle-task" data-id="${t.id}" ${t.completed ? 'checked' : ''} style="margin-right:8px;">
-                        ${t.text}
+                        ${escapeHtml(t.text)}
                     </span>
-                    <button class="delete-task danger-btn" data-id="${t.id}" style="padding:2px 6px; font-size:0.8rem; margin:0;">&times;</button>
+                    <button type="button" class="delete-task danger-btn" data-id="${t.id}" aria-label="Delete task">&times;</button>
                 `;
                 taskList.appendChild(li);
             });
@@ -827,28 +987,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ongoingDiv.innerHTML = ongoingProj.length === 0 ? '<p>No ongoing builds.</p>' : ongoingProj.map(p => `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border-color);">
-                <span>🛠️ ${p.name}</span>
+                <span>🛠️ ${escapeHtml(p.name)}</span>
                 <div>
-                    <button class="complete-proj primary-btn" data-id="${p.id}" style="padding:4px 8px; font-size:0.8rem;">Mark Done</button>
-                    <button class="delete-proj danger-btn" data-id="${p.id}" style="padding:4px 8px; font-size:0.8rem; margin:0;">Delete</button>
+                    <button type="button" class="complete-proj primary-btn" data-id="${p.id}">Mark Done</button>
+                    <button type="button" class="delete-proj danger-btn" data-id="${p.id}">Delete</button>
                 </div>
             </div>
         `).join('');
 
         completedDiv.innerHTML = completedProj.length === 0 ? '<p>No completed projects yet.</p>' : completedProj.map(p => `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border-color);">
-                <span style="color:var(--success-color);">✅ ${p.name}</span>
-                <button class="delete-proj danger-btn" data-id="${p.id}" style="padding:4px 8px; font-size:0.8rem; margin:0;">Delete</button>
+                <span style="color:var(--success-color);">✅ ${escapeHtml(p.name)}</span>
+                <button type="button" class="delete-proj danger-btn" data-id="${p.id}">Delete</button>
             </div>
         `).join('');
 
         // 5. Dashboard featured catalog, recent gear, and wishlist progress
         if (featuredCard) {
-            featuredCard.innerHTML = featuredProducts.map((product, index) => `
+            featuredCard.classList.toggle('is-filtered', categoryFilter.value !== 'All');
+            const visibleProducts = categoryFilter.value === 'All'
+                ? featuredProducts.slice(0, 3)
+                : featuredProducts.filter(product => product.category === categoryFilter.value);
+            featuredCard.innerHTML = visibleProducts.map(product => `
                 <article class="featured-product-card">
                     <div class="featured-product-image"><img src="${product.image}" alt="${product.name}" loading="lazy"></div>
-                    <div class="featured-product-info"><small>${product.category} <span>·</span> In Stock</small><h4>${product.name}</h4>
-                        <div class="featured-product-footer"><strong>₱${product.price.toLocaleString()}</strong><button type="button" class="featured-add-btn" data-featured-index="${index}" aria-label="Add ${product.name} to wishlist" title="Add to wishlist">+</button></div>
+                    <div class="featured-product-info"><small>${product.category} <span>·</span> Sample gear</small><h4>${product.name}</h4>
+                        <div class="featured-product-footer"><strong>₱${product.price.toLocaleString()}</strong><button type="button" class="featured-add-btn" data-featured-name="${product.name}" aria-label="Add ${product.name} to wishlist" title="Add to wishlist">+</button></div>
                     </div>
                 </article>`).join('');
         }
@@ -857,9 +1021,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const recentGear = [...gearItems].slice(-3).reverse();
         recentGearList.innerHTML = recentGear.length ? recentGear.map(item => `
             <div class="recent-gear-item">
-                <div class="recent-gear-thumb">${item.image ? `<img src="${item.image}" alt="" loading="lazy">` : '<span aria-hidden="true">⬡</span>'}</div>
-                <div class="recent-gear-copy"><strong>${item.name}</strong><small>Added to ${item.status}</small></div>
-                <span class="recent-status ${item.status === 'Owned' ? 'is-owned' : 'is-wishlist'}">${item.status}</span>
+                <div class="recent-gear-thumb">${item.image ? `<img src="${escapeHtml(item.image)}" alt="" loading="lazy">` : '<span aria-hidden="true">⬡</span>'}</div>
+                <div class="recent-gear-copy"><strong>${escapeHtml(item.name)}</strong><small>Added to ${escapeHtml(item.status)}</small></div>
+                <span class="recent-status ${item.status === 'Owned' ? 'is-owned' : 'is-wishlist'}">${escapeHtml(item.status)}</span>
             </div>`).join('') : '<p class="empty-dashboard-message">Your newest gear will appear here.</p>';
 
         const wishlistGoal = 50000;
